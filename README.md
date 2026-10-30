@@ -18,7 +18,7 @@ Asignación Conductores  ──────────┘  (placa → centro de
    - BD gastos / BD peajes: suma por placa + tercero, con su centro de costo.
    - SAP1 / SAP2: estructura FV50 (cuenta mayor, texto y dh vacíos, valor, saldo, diferencia, V7, CC, 222222222, tercero).
    - DIFERENCIAS: CC cuyo gasto total supera el disponible.
-   - CADI: emisor de la misma cuenta con sobrante suficiente (saldo − su propio gasto), sin dejarlo en negativo.
+   - CADI: emisor que también se legaliza en la misma cuenta, con sobrante suficiente (saldo − su propio gasto), sin dejarlo en negativo.
    - REGISTRO: SAP1 + SAP2 sin columnas auxiliares, en lotes de 4 para FV50.
 
 ## Cuentas
@@ -48,7 +48,7 @@ iniciar_app.bat
 2. Elegir fechas y pulsar **Generar**.
 3. Revisar las pestañas (filas en rojo = diferencia negativa) y **Exportar** → `output/<fecha_hora>/` con `legalizacion.xlsx`, un JSON por tabla y `meta.json`.
 
-El botón **Copiar** de cada pestaña copia las filas (sin encabezado, separadas por tabulador) para pegar directo en SAP.
+El botón **Exportar a Excel** de cada pestaña guarda esa tabla sola en un .xlsx y lo abre.
 
 ## Scripts de prueba
 

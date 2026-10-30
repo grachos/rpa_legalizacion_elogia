@@ -170,7 +170,8 @@ def _registro(sap: pd.DataFrame) -> pd.DataFrame:
 def _account(name, df, cc_map, gl, pospre, observacion, balances) -> AccountResult:
     bd, a1 = _build_bd(df, cc_map)
     sap, a2 = _build_sap(bd, gl, balances)
-    diff, cadi, a3 = _build_cadi(sap, balances, pospre, observacion, set(cc_map.values()))
+    # Donors must be cost centers being legalized in this same account.
+    diff, cadi, a3 = _build_cadi(sap, balances, pospre, observacion, set(sap["centro_costo"]))
     return AccountResult(name, bd, sap, diff, cadi, _registro(sap), a1 + a2 + a3)
 
 

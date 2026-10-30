@@ -52,14 +52,15 @@ def _cell(col: str, v) -> str:
 class TableView(ctk.CTkFrame):
     """Treeview with scrollbars, totals footer and copy-to-clipboard."""
 
-    def __init__(self, master):
+    def __init__(self, master, name: str):
         super().__init__(master, fg_color="transparent")
+        self.name = name
         self.df = pd.DataFrame()
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", pady=(0, 4))
         self.summary = ctk.CTkLabel(bar, text="Sin datos", anchor="w")
         self.summary.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(bar, text="Copiar (sin encabezado)", width=170, command=self.copy).pack(side="right")
+        ctk.CTkButton(bar, text="Exportar a Excel", width=170, command=self.export).pack(side="right")
 
         holder = tk.Frame(self)
         holder.pack(fill="both", expand=True)
@@ -102,6 +103,26 @@ class TableView(ctk.CTkFrame):
             parts.append(f"En negativo: {n}")
         self.summary.configure(text="   |   ".join(parts))
 
+    def export(self) -> None:
+        """Saves this table alone to an Excel file and opens it."""
+        if self.df.empty:
+            messagebox.showinfo("Exportar", "No hay datos en esta tabla.")
+            return
+        settings.output_dir.mkdir(parents=True, exist_ok=True)
+        slug = self.name.replace(" ", "_")
+        path = filedialog.asksaveasfilename(
+            title=f"Exportar {self.name}", defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
+            initialdir=str(settings.output_dir), initialfile=f"{slug}_{datetime.now():%Y%m%d_%H%M}.xlsx")
+        if not path:
+            return
+        try:
+            with pd.ExcelWriter(path, engine="openpyxl") as xw:
+                self.df.to_excel(xw, sheet_name=self.name[:31], index=False)
+        except PermissionError:
+            messagebox.showerror("Exportar", "No se pudo escribir. ¿El archivo está abierto en Excel?")
+            return
+        os.startfile(path)  # Windows only
+
     def copy(self) -> None:
         """Copies selected rows (or all) as tab-separated text, ready to paste in SAP."""
         sel = self.tree.selection() or self.tree.get_children()
@@ -135,7 +156,7 @@ class App(ctk.CTk):
         self.tabs.pack(fill="both", expand=True, padx=12, pady=(0, 6))
         self.views = {}
         for name in self.TABS:
-            view = TableView(self.tabs.add(name))
+            view = TableView(self.tabs.add(name), name)
             view.pack(fill="both", expand=True)
             self.views[name] = view
         self.status = ctk.CTkLabel(self, text="Listo.", anchor="w")
