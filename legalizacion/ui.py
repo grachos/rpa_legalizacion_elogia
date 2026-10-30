@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import os
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -146,6 +147,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("light")
         self.title("Auto legalización SAP")
         self.geometry("1280x760")
+        self.after(50, self._maximize)
         self.minsize(980, 600)
         self.state_data = _load_state()
         self.result: engine.LegalizationResult | None = None
@@ -195,13 +197,25 @@ class App(ctk.CTk):
         self.balances: dict | None = None
         self.balances_meta: dict = {}
 
-        self.progress = ctk.CTkProgressBar(self, mode="indeterminate", height=6)
+        self.progress_box = ctk.CTkFrame(self, fg_color="transparent")
+        self.progress = ctk.CTkProgressBar(self.progress_box, mode="determinate", height=14)
+        self.progress.pack(side="left", fill="x", expand=True)
+        self.progress_lbl = ctk.CTkLabel(self.progress_box, text="", width=420, anchor="w")
+        self.progress_lbl.pack(side="left", padx=(10, 0))
+        self._pct = self._ceil = 0.0
+        self._step_text, self._step_t0, self._ticking = "", 0.0, False
 
     def _clear_balances(self) -> None:
         if self.balances is not None:
             self.balances, self.balances_meta = None, {}
             self.run_btn.configure(state="disabled")
             self.sap_info.configure(text="Cambiaste de ambiente: vuelve a traer los saldos de SAP.")
+
+    def _maximize(self) -> None:
+        try:
+            self.state("zoomed")  # Windows
+        except tk.TclError:
+            self.attributes("-zoomed", True)  # Linux (dev)
 
     def _open_settings(self) -> None:
         SettingsDialog(self)
@@ -210,13 +224,38 @@ class App(ctk.CTk):
     def _busy(self, on: bool, text: str = "") -> None:
         self.run_btn.configure(state="disabled" if on or self.balances is None else "normal")
         if on:
-            self.progress.pack(fill="x", padx=12, before=self.tabs)
-            self.progress.start()
+            self._pct = self._ceil = 0.0
+            self.progress.set(0)
+            self.progress_box.pack(fill="x", padx=14, pady=(0, 6), before=self.tabs)
+            self._ticking = True
+            self._tick()
         else:
-            self.progress.stop()
-            self.progress.pack_forget()
+            self._ticking = False
+            self.progress_box.pack_forget()
         if text:
             self.status.configure(text=text)
+
+    def _step(self, start: float, ceiling: float, text: str) -> None:
+        """Thread-safe: starts a stage at `start`% that creeps toward `ceiling`% while it runs."""
+        def apply():
+            self._pct, self._ceil = max(self._pct, start), ceiling
+            self._step_text, self._step_t0 = text, time.time()
+            self._render()
+        self.after(0, apply)
+
+    def _tick(self) -> None:
+        if not self._ticking:
+            return
+        if self._pct < self._ceil:  # long stages: approach the ceiling without reaching it
+            self._pct += max((self._ceil - self._pct) * 0.04, 0.05)
+            self._pct = min(self._pct, self._ceil - 0.5 if self._ceil < 100 else 100)
+        self._render()
+        self.after(400, self._tick)
+
+    def _render(self) -> None:
+        secs = int(time.time() - self._step_t0) if self._step_t0 else 0
+        self.progress.set(self._pct / 100)
+        self.progress_lbl.configure(text=f"{self._pct:5.0f} %  ·  {self._step_text}  ({secs} s)")
 
     def _fetch_sap(self) -> None:
         env = self.env_var.get()
@@ -228,7 +267,7 @@ class App(ctk.CTk):
         from .gr55 import fetch_balances, save_balances
 
         try:
-            balances = fetch_balances(env)
+            balances = fetch_balances(env, progress=self._step)
             if not balances["travel"] and not balances["tolls"]:
                 raise ValueError("La GR55 no devolvió datos.")
             path = save_balances(balances, env)  # audit copy
@@ -264,12 +303,17 @@ class App(ctk.CTk):
     def _worker(self, start: date, end: date, balances: dict) -> None:
         try:
             api = LegalizacionApi()
+            self._step(0, 15, "Despertando la API de Silogtran")
             api.wake_up()
+            self._step(15, 70, f"Descargando legalizaciones {start} a {end}")
             raw = api.legalizacion_viaje_sap(start, end)
-            self.after(0, lambda: self.status.configure(text=f"{len(raw)} registros recibidos. Calculando…"))
             if raw.empty:
                 raise ValueError("La API no devolvió registros para ese rango.")
-            result = engine.build(raw, engine.load_cost_centers(), balances)
+            self._step(70, 80, f"{len(raw)} registros recibidos · leyendo centros de costo")
+            cc_map = engine.load_cost_centers()
+            self._step(80, 95, "Cruzando legalizaciones con saldos SAP")
+            result = engine.build(raw, cc_map, balances)
+            self._step(95, 100, "Mostrando tablas")
             meta = {"fecha_inicial": start, "fecha_final": end, "registros_api": len(raw), **self.balances_meta}
             self.after(0, lambda: self._show(result, meta))
         except Exception as e:  # noqa: BLE001 - shown to the user

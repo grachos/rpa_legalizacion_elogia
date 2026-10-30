@@ -63,8 +63,15 @@ def _wait_report_workbook(before: set[str], timeout: int = 90):
                    "alguna ventana de SAP pendiente y vuelve a intentar.")
 
 
-def _run_one(sap: SapSession, pospre: str) -> dict[str, float]:
+def _noop(*_a) -> None:
+    pass
+
+
+def _run_one(sap: SapSession, pospre: str, label: str, lo: int, hi: int, progress=_noop) -> dict[str, float]:
+    """Runs GR55 for one pospre; reports progress between lo and hi percent."""
+    span = hi - lo
     s = sap.session
+    progress(lo, lo + span * 0.2, f"GR55 {label}: llenando selección")
     sap.transaction("GR55")
     s.findById("wnd[0]/usr/ctxtRGRWJ-JOB").text = settings.gr55_group
     s.findById("wnd[0]").sendVKey(8)
@@ -74,8 +81,10 @@ def _run_one(sap: SapSession, pospre: str) -> dict[str, float]:
     s.findById("wnd[0]/usr/ctxt_4FFIPEX-LOW").text = pospre
     s.findById("wnd[0]/usr/ctxt_4FFIPEX-HIGH").text = pospre
     before = _sap_workbooks(_excel())
+    progress(lo + span * 0.2, lo + span * 0.85, f"GR55 {label}: ejecutando informe y abriendo Excel")
     s.findById("wnd[0]").sendVKey(8)
     wb = _wait_report_workbook(before)
+    progress(lo + span * 0.85, hi, f"GR55 {label}: leyendo saldos")
     try:
         ws = wb.Worksheets(1)
         if str(ws.Name).upper() == "NO_DATA":
@@ -87,17 +96,23 @@ def _run_one(sap: SapSession, pospre: str) -> dict[str, float]:
         s.findById("wnd[0]").sendVKey(3)  # back to selection
 
 
-def fetch_balances(env: str | None = None) -> dict[str, dict[str, float]]:
-    """Runs GR55 for travel expenses and cash tolls. Returns {'travel': {...}, 'tolls': {...}}."""
+def fetch_balances(env: str | None = None, progress=_noop) -> dict[str, dict[str, float]]:
+    """Runs GR55 for travel expenses and cash tolls. Returns {'travel': {...}, 'tolls': {...}}.
+
+    progress(start_pct, end_pct, text) is called at each stage (start of a stage and its ceiling).
+    """
     import pythoncom
 
     pythoncom.CoInitialize()  # needed when called from a UI thread
     try:
+        progress(0, 8, f"Conectando a SAP {env or 'PRD'}")
         with SapSession(env) as sap, SecurityPromptWatcher():
-            return {
-                "travel": _run_one(sap, settings.pospre_travel),
-                "tolls": _run_one(sap, settings.pospre_tolls),
+            result = {
+                "travel": _run_one(sap, settings.pospre_travel, "gastos de viaje", 8, 52, progress),
+                "tolls": _run_one(sap, settings.pospre_tolls, "peajes", 52, 96, progress),
             }
+        progress(96, 100, "Guardando saldos")
+        return result
     finally:
         pythoncom.CoUninitialize()
 
