@@ -12,7 +12,7 @@ Asignación Conductores  ──────────┘  (placa → centro de
 
 1. **Legalizaciones**: `GET /api/reports/legalizacion-viaje-sap` de [apis_legalizacion_silogtran](https://github.com/grachos/apis_legalizacion_silogtran) (sin PEAJE ELECTRÓNICO ni anulados).
 2. **Centros de costo**: hoja `CENTROS DE COSTOS FLOTA` de `Asignación Conductores.xlsx` (no se versiona).
-3. **Saldos SAP**: RPA sobre **GR55** (grupo `ZFM1`, centro gestor 25000000–29000000) o carga manual del Excel de saldos.
+3. **Saldos SAP**: solo por RPA sobre **GR55** (grupo `ZFM1`, centro gestor 25000000–29000000); no hay carga manual.
 4. **Cálculo**:
    - *Gastos de viaje* = todos los conceptos excepto `PEAJES EN EFECTIVOS`; *Peajes* = solo `PEAJES EN EFECTIVOS`.
    - BD gastos / BD peajes: suma por placa + tercero, con su centro de costo.
@@ -36,7 +36,7 @@ Requisitos: Windows, Python 3.11+, SAP GUI con scripting habilitado, Excel.
 probar_api.bat      :: crea .venv, instala dependencias, crea .env y prueba la API
 ```
 
-Completar `.env` (ver `.env.example`): `API_KEY`, ambiente SAP (`SAP_ENV=QAS|PRD`) y conexión/mandante/usuario/contraseña por ambiente. Copiar `Asignación Conductores.xlsx` en la raíz del proyecto.
+La configuración (API key, usuarios SAP PRD/QAS, ruta de `Asignación Conductores.xlsx`, cuentas y parámetros GR55) se edita desde el botón **⚙ Configuración** de la app y se guarda en `.env` junto al ejecutable. La primera vez la app abre la configuración automáticamente.
 
 ## Uso
 
@@ -44,7 +44,7 @@ Completar `.env` (ver `.env.example`): `API_KEY`, ambiente SAP (`SAP_ENV=QAS|PRD
 iniciar_app.bat
 ```
 
-1. Elegir ambiente SAP (QAS/PRD) y pulsar **Traer saldos de SAP (GR55)** (o seleccionar un Excel de saldos).
+1. Ambiente SAP (PRD por defecto) → **Traer saldos de SAP (GR55)**. **Generar** se habilita cuando hay saldos.
 2. Elegir fechas y pulsar **Generar**.
 3. Revisar las pestañas (filas en rojo = diferencia negativa) y **Exportar** → `output/<fecha_hora>/` con `legalizacion.xlsx`, un JSON por tabla y `meta.json`.
 

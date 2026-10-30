@@ -14,7 +14,7 @@ import pandas as pd
 
 from . import engine
 from .api_client import LegalizacionApi
-from .config import ENV_CREATED, ENV_FILE, ROOT, settings
+from .config import FIELDS, ROOT, is_configured, read_env, settings, write_env
 
 STATE_FILE = ROOT / ".ui_state.json"
 MONEY_COLUMNS = {"valor", "saldo_sap", "diferencia", "total_gasto", "importe", "faltante_cc"}
@@ -175,39 +175,40 @@ class App(ctk.CTk):
         self.end_var = tk.StringVar(value=today.isoformat())
         ctk.CTkEntry(top, textvariable=self.end_var, width=110).grid(row=0, column=3)
 
-        ctk.CTkLabel(top, text="Saldos SAP").grid(row=0, column=4, padx=(14, 4))
-        default_bal = self.state_data.get("balances_file") or str(ROOT / "Gastos varios y peajes.xlsx")
-        self.bal_var = tk.StringVar(value=default_bal)
-        ctk.CTkEntry(top, textvariable=self.bal_var, width=300).grid(row=0, column=5, sticky="ew")
-        ctk.CTkButton(top, text="…", width=32, command=self._pick_balances).grid(row=0, column=6, padx=4)
+        ctk.CTkLabel(top, text="Ambiente SAP").grid(row=0, column=4, padx=(14, 4))
+        self.env_var = tk.StringVar(value="PRD")
+        ctk.CTkSegmentedButton(top, values=["PRD", "QAS"], variable=self.env_var,
+                               command=lambda _v: self._clear_balances()).grid(row=0, column=5, sticky="w")
+        ctk.CTkButton(top, text="⚙ Configuración", width=130, fg_color="#607D8B", hover_color="#455A64",
+                      command=self._open_settings).grid(row=0, column=8, padx=(14, 4))
 
-        ctk.CTkLabel(top, text="Ambiente SAP").grid(row=0, column=7, padx=(14, 4))
-        self.env_var = tk.StringVar(value=os.getenv("SAP_ENV", "QAS").upper())
-        ctk.CTkSegmentedButton(top, values=["QAS", "PRD"], variable=self.env_var).grid(row=0, column=8)
-
-        self.run_btn = ctk.CTkButton(top, text="Generar", width=110, command=self._run)
+        self.run_btn = ctk.CTkButton(top, text="Generar", width=110, state="disabled", command=self._run)
         self.run_btn.grid(row=0, column=9, padx=(14, 4))
         self.export_btn = ctk.CTkButton(top, text="Exportar", width=110, state="disabled", command=self._export)
         self.export_btn.grid(row=0, column=10, padx=(4, 10))
         self.sap_btn = ctk.CTkButton(top, text="Traer saldos de SAP (GR55)", width=200,
                                      fg_color="#2E7D32", hover_color="#1B5E20", command=self._fetch_sap)
-        self.sap_btn.grid(row=1, column=5, sticky="w", pady=(0, 8))
-        self.sap_info = ctk.CTkLabel(top, text="o selecciona un Excel de saldos con …", anchor="w")
-        self.sap_info.grid(row=1, column=6, columnspan=5, sticky="w", padx=8, pady=(0, 8))
-        top.columnconfigure(5, weight=1)
+        self.sap_btn.grid(row=1, column=0, columnspan=2, sticky="w", padx=(10, 4), pady=(0, 8))
+        self.sap_info = ctk.CTkLabel(top, text="Paso 1: trae los saldos de SAP. Paso 2: Generar.", anchor="w")
+        self.sap_info.grid(row=1, column=2, columnspan=9, sticky="w", padx=8, pady=(0, 8))
+        top.columnconfigure(7, weight=1)
+        self.balances: dict | None = None
+        self.balances_meta: dict = {}
 
         self.progress = ctk.CTkProgressBar(self, mode="indeterminate", height=6)
 
-    def _pick_balances(self) -> None:
-        path = filedialog.askopenfilename(title="Archivo de saldos SAP (GR55)",
-                                          initialdir=str(Path(self.bal_var.get()).parent),
-                                          filetypes=[("Excel", "*.xlsx *.xls")])
-        if path:
-            self.bal_var.set(path)
+    def _clear_balances(self) -> None:
+        if self.balances is not None:
+            self.balances, self.balances_meta = None, {}
+            self.run_btn.configure(state="disabled")
+            self.sap_info.configure(text="Cambiaste de ambiente: vuelve a traer los saldos de SAP.")
+
+    def _open_settings(self) -> None:
+        SettingsDialog(self)
 
     # ---------- actions ----------
     def _busy(self, on: bool, text: str = "") -> None:
-        self.run_btn.configure(state="disabled" if on else "normal")
+        self.run_btn.configure(state="disabled" if on or self.balances is None else "normal")
         if on:
             self.progress.pack(fill="x", padx=12, before=self.tabs)
             self.progress.start()
@@ -219,8 +220,6 @@ class App(ctk.CTk):
 
     def _fetch_sap(self) -> None:
         env = self.env_var.get()
-        if env == "PRD" and not messagebox.askyesno("SAP", "Se consultará la GR55 en PRODUCTIVO (solo lectura). ¿Continuar?"):
-            return
         self.sap_btn.configure(state="disabled")
         self._busy(True, f"Consultando GR55 en SAP {env}…")
         threading.Thread(target=self._sap_worker, args=(env,), daemon=True).start()
@@ -232,19 +231,20 @@ class App(ctk.CTk):
             balances = fetch_balances(env)
             if not balances["travel"] and not balances["tolls"]:
                 raise ValueError("La GR55 no devolvió datos.")
-            path = save_balances(balances, env)
-            info = (f"SAP {env}: {len(balances['travel'])} CC gastos · {len(balances['tolls'])} CC peajes")
-            self.after(0, lambda: self._sap_done(path, info))
+            path = save_balances(balances, env)  # audit copy
+            info = (f"Saldos SAP {env}: {len(balances['travel'])} CC gastos · {len(balances['tolls'])} CC peajes")
+            self.after(0, lambda: self._sap_done(balances, path, env, info))
         except Exception as e:  # noqa: BLE001 - shown to the user
             msg = str(e)
             self.after(0, lambda: (self.sap_btn.configure(state="normal"),
                                    self._busy(False, f"Error SAP: {msg}"), messagebox.showerror("SAP", msg)))
 
-    def _sap_done(self, path: Path, info: str) -> None:
-        self.bal_var.set(str(path))
+    def _sap_done(self, balances: dict, path: Path, env: str, info: str) -> None:
+        self.balances = balances
+        self.balances_meta = {"saldos": str(path), "ambiente_sap": env, "saldos_hora": datetime.now()}
         self.sap_btn.configure(state="normal")
         self.sap_info.configure(text=f"{info} · {datetime.now():%H:%M}")
-        self._busy(False, f"Saldos guardados en {path.name}. Ya puedes Generar.")
+        self._busy(False, "Saldos listos. Ya puedes Generar.")
 
     def _run(self) -> None:
         try:
@@ -255,16 +255,13 @@ class App(ctk.CTk):
         if end < start:
             messagebox.showerror("Fechas", "La fecha final es anterior a la inicial.")
             return
-        bal = Path(self.bal_var.get().strip())
-        if not bal.exists():
-            messagebox.showerror("Saldos", f"No existe el archivo de saldos:\n{bal}")
+        if self.balances is None:
+            messagebox.showwarning("Saldos", "Primero trae los saldos de SAP (GR55).")
             return
-        self.state_data["balances_file"] = str(bal)
-        _save_state(self.state_data)
         self._busy(True, "Consultando Silogtran (la API puede tardar si estaba dormida)…")
-        threading.Thread(target=self._worker, args=(start, end, bal), daemon=True).start()
+        threading.Thread(target=self._worker, args=(start, end, self.balances), daemon=True).start()
 
-    def _worker(self, start: date, end: date, bal: Path) -> None:
+    def _worker(self, start: date, end: date, balances: dict) -> None:
         try:
             api = LegalizacionApi()
             api.wake_up()
@@ -272,9 +269,8 @@ class App(ctk.CTk):
             self.after(0, lambda: self.status.configure(text=f"{len(raw)} registros recibidos. Calculando…"))
             if raw.empty:
                 raise ValueError("La API no devolvió registros para ese rango.")
-            result = engine.build(raw, engine.load_cost_centers(), engine.load_balances_excel(bal))
-            meta = {"fecha_inicial": start, "fecha_final": end, "saldos": str(bal),
-                    "ambiente_sap": self.env_var.get(), "registros_api": len(raw)}
+            result = engine.build(raw, engine.load_cost_centers(), balances)
+            meta = {"fecha_inicial": start, "fecha_final": end, "registros_api": len(raw), **self.balances_meta}
             self.after(0, lambda: self._show(result, meta))
         except Exception as e:  # noqa: BLE001 - shown to the user
             msg = str(e)
@@ -303,19 +299,60 @@ class App(ctk.CTk):
             os.startfile(folder)  # Windows only
 
 
+class SettingsDialog(ctk.CTkToplevel):
+    """Edits the .env values (API, SAP users, files, accounts)."""
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.title("Configuración")
+        self.geometry("620x640")
+        self.transient(app)
+        self.grab_set()
+        values = read_env()
+        self.vars: dict[str, tk.StringVar] = {}
+        body = ctk.CTkScrollableFrame(self)
+        body.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        body.columnconfigure(1, weight=1)
+        row = 0
+        for section, fields in FIELDS:
+            ctk.CTkLabel(body, text=section, font=ctk.CTkFont(weight="bold")).grid(
+                row=row, column=0, columnspan=3, sticky="w", pady=(12 if row else 0, 4))
+            row += 1
+            for f in fields:
+                var = tk.StringVar(value=values.get(f.key, f.default))
+                self.vars[f.key] = var
+                ctk.CTkLabel(body, text=f.label, anchor="w").grid(row=row, column=0, sticky="w", padx=(8, 8), pady=2)
+                ctk.CTkEntry(body, textvariable=var, show="•" if f.secret else "").grid(
+                    row=row, column=1, sticky="ew", pady=2)
+                if f.kind == "file":
+                    ctk.CTkButton(body, text="…", width=32, command=lambda v=var: self._pick(v)).grid(
+                        row=row, column=2, padx=4)
+                row += 1
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkButton(bar, text="Guardar", width=120, command=self._save).pack(side="right")
+        ctk.CTkButton(bar, text="Cancelar", width=120, fg_color="#9E9E9E", hover_color="#757575",
+                      command=self.destroy).pack(side="right", padx=8)
+
+    def _pick(self, var: tk.StringVar) -> None:
+        path = filedialog.askopenfilename(parent=self, filetypes=[("Excel", "*.xlsx *.xls")])
+        if path:
+            var.set(path)
+
+    def _save(self) -> None:
+        try:
+            write_env({k: v.get().strip() if k != "DRIVERS_SHEET" else v.get() for k, v in self.vars.items()})
+        except OSError as e:
+            messagebox.showerror("Configuración", f"No se pudo guardar: {e}", parent=self)
+            return
+        messagebox.showinfo("Configuración", "Configuración guardada.", parent=self)
+        self.destroy()
+
+
 def main() -> None:
     app = App()
-    if ENV_CREATED or not settings.api_key or settings.api_key == "change-me":
-        app.after(300, lambda: _ask_config(app))
+    if not is_configured():
+        app.after(300, lambda: (messagebox.showinfo(
+            "Configuración", "Primera vez: completa la API key y tu usuario SAP.", parent=app),
+            app._open_settings()))
     app.mainloop()
-
-
-def _ask_config(app: "App") -> None:
-    messagebox.showwarning(
-        "Configuración",
-        f"Completa el archivo de configuración y vuelve a abrir la app:\n\n{ENV_FILE}\n\n"
-        "• API_KEY de la API de Silogtran\n• Usuario SAP (SAP_PRD_USER / SAP_QAS_USER)\n"
-        "• DRIVERS_FILE: ruta de 'Asignación Conductores.xlsx'",
-        parent=app)
-    os.startfile(ENV_FILE)  # opens in the default text editor
-    app.destroy()
