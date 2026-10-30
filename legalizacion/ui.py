@@ -14,7 +14,7 @@ import pandas as pd
 
 from . import engine
 from .api_client import LegalizacionApi
-from .config import ROOT, settings
+from .config import ENV_CREATED, ENV_FILE, ROOT, settings
 
 STATE_FILE = ROOT / ".ui_state.json"
 MONEY_COLUMNS = {"valor", "saldo_sap", "diferencia", "total_gasto", "importe", "faltante_cc"}
@@ -304,4 +304,18 @@ class App(ctk.CTk):
 
 
 def main() -> None:
-    App().mainloop()
+    app = App()
+    if ENV_CREATED or not settings.api_key or settings.api_key == "change-me":
+        app.after(300, lambda: _ask_config(app))
+    app.mainloop()
+
+
+def _ask_config(app: "App") -> None:
+    messagebox.showwarning(
+        "Configuración",
+        f"Completa el archivo de configuración y vuelve a abrir la app:\n\n{ENV_FILE}\n\n"
+        "• API_KEY de la API de Silogtran\n• Usuario SAP (SAP_PRD_USER / SAP_QAS_USER)\n"
+        "• DRIVERS_FILE: ruta de 'Asignación Conductores.xlsx'",
+        parent=app)
+    os.startfile(ENV_FILE)  # opens in the default text editor
+    app.destroy()

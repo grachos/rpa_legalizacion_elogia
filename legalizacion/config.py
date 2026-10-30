@@ -1,14 +1,27 @@
-"""Application settings loaded from .env (project root)."""
+"""Application settings loaded from .env (next to the .exe, or project root in dev)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import shutil
+import sys
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+if getattr(sys, "frozen", False):  # PyInstaller .exe: user files live next to the executable
+    ROOT = Path(sys.executable).resolve().parent
+    BUNDLE = Path(getattr(sys, "_MEIPASS", ROOT))
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+    BUNDLE = ROOT
+
+ENV_FILE = ROOT / ".env"
+ENV_CREATED = False
+if not ENV_FILE.exists() and (BUNDLE / ".env.example").exists():
+    shutil.copy(BUNDLE / ".env.example", ENV_FILE)
+    ENV_CREATED = True
+load_dotenv(ENV_FILE)
 
 
 def _env(key: str, default: str = "") -> str:

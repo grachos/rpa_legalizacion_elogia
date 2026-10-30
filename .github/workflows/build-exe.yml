@@ -1,0 +1,44 @@
+name: Build Windows exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Pre-generate comtypes UIAutomation wrappers
+        run: python -c "from pywinauto import Desktop; Desktop(backend='uia')"
+      - name: Build
+        run: build_exe.bat
+        shell: cmd
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item dist\RPA_Legalizacion_Elogia.exe pkg\
+          Copy-Item .env.example pkg\
+          Copy-Item docs\LEEME_COLEGAS.txt pkg\
+          Compress-Archive -Path pkg\* -DestinationPath RPA_Legalizacion_Elogia.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RPA_Legalizacion_Elogia
+          path: RPA_Legalizacion_Elogia.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RPA_Legalizacion_Elogia.zip

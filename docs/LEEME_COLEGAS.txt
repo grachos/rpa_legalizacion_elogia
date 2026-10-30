@@ -1,0 +1,22 @@
+RPA LEGALIZACION ELOGIA - Instrucciones
+=======================================
+
+1. Copia esta carpeta completa (RPA_Legalizacion_Elogia.exe y .env.example) en tu PC,
+   por ejemplo en Documentos\RPA_Legalizacion.
+
+2. Abre RPA_Legalizacion_Elogia.exe. La primera vez crea el archivo ".env" y lo abre
+   en el Bloc de notas. Completa:
+     - API_KEY            (pidela a Sistemas)
+     - SAP_PRD_USER       tu usuario SAP de Productivo (y SAP_QAS_USER si usas Calidad)
+     - SAP_PRD_PASSWORD   opcional: solo si quieres que la app abra SAP sola.
+                          Si SAP ya esta abierto con tu usuario, no hace falta.
+     - DRIVERS_FILE       ruta completa del archivo "Asignación Conductores.xlsx"
+   Guarda, cierra el Bloc de notas y abre de nuevo la app.
+
+3. Requisitos: SAP GUI con scripting habilitado y Excel instalado.
+
+4. Uso: ambiente PRD -> "Traer saldos de SAP (GR55)" -> fechas -> Generar -> revisar -> Exportar.
+   Los resultados quedan en la carpeta "output" junto al .exe.
+
+Nota: Windows puede mostrar "Windows protegio su PC" la primera vez por ser un .exe
+sin firma digital. Haz clic en "Mas informacion" -> "Ejecutar de todas formas".
