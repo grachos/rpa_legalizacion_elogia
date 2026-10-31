@@ -222,6 +222,19 @@ class App(ctk.CTk):
         except tk.TclError:
             self.attributes("-zoomed", True)  # Linux (dev)
 
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """pythonw has no console: log UI errors to output/app_error.log and show them."""
+        import traceback
+
+        text = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            settings.output_dir.mkdir(parents=True, exist_ok=True)
+            with open(settings.output_dir / "app_error.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}\n{text}\n")
+        except OSError:
+            pass
+        messagebox.showerror("Error", f"{val}\n\nDetalle en output\\app_error.log", parent=self)
+
     def _open_settings(self) -> None:
         SettingsDialog(self)
 
@@ -354,9 +367,12 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, app: "App"):
         super().__init__(app)
         self.title("Configuración")
-        self.geometry("620x640")
+        w, h = 620, 640
+        x = app.winfo_rootx() + max((app.winfo_width() - w) // 2, 0)
+        y = app.winfo_rooty() + max((app.winfo_height() - h) // 2, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
         self.transient(app)
-        self.grab_set()
+        self.after(200, self._bring_front)  # CTkToplevel opens behind a zoomed parent on Windows
         values = read_env()
         self.vars: dict[str, tk.StringVar] = {}
         body = ctk.CTkScrollableFrame(self)
@@ -382,6 +398,14 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkButton(bar, text="Guardar", width=120, command=self._save).pack(side="right")
         ctk.CTkButton(bar, text="Cancelar", width=120, fg_color="#9E9E9E", hover_color="#757575",
                       command=self.destroy).pack(side="right", padx=8)
+
+    def _bring_front(self) -> None:
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(300, lambda: self.attributes("-topmost", False))
+        self.focus_force()
+        self.grab_set()
 
     def _pick(self, var: tk.StringVar) -> None:
         path = filedialog.askopenfilename(parent=self, filetypes=[("Excel", "*.xlsx *.xls")])
