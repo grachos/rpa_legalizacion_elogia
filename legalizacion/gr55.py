@@ -63,6 +63,17 @@ def _wait_report_workbook(before: set[str], timeout: int = 90):
                    "alguna ventana de SAP pendiente y vuelve a intentar.")
 
 
+def _quit_excel_if_empty() -> None:
+    """Closes the empty Excel window SAP leaves behind; never touches Excel with user workbooks open."""
+    xl = _excel()
+    try:
+        if xl is not None and xl.Workbooks.Count == 0:
+            xl.DisplayAlerts = False
+            xl.Quit()
+    except Exception:  # noqa: BLE001 - best effort
+        pass
+
+
 def _noop(*_a) -> None:
     pass
 
@@ -107,10 +118,13 @@ def fetch_balances(env: str | None = None, progress=_noop) -> dict[str, dict[str
     try:
         progress(0, 8, f"Conectando a SAP {env or 'PRD'}")
         with SapSession(env) as sap, SecurityPromptWatcher():
-            result = {
-                "travel": _run_one(sap, settings.pospre_travel, "gastos de viaje", 8, 52, progress),
-                "tolls": _run_one(sap, settings.pospre_tolls, "peajes", 52, 96, progress),
-            }
+            try:
+                result = {
+                    "travel": _run_one(sap, settings.pospre_travel, "gastos de viaje", 8, 52, progress),
+                    "tolls": _run_one(sap, settings.pospre_tolls, "peajes", 52, 96, progress),
+                }
+            finally:
+                _quit_excel_if_empty()
         progress(96, 100, "Guardando saldos")
         return result
     finally:
