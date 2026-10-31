@@ -1,7 +1,7 @@
 """Desktop UI (CustomTkinter) to generate and review the legalization tables."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import json
 import os
@@ -175,7 +175,7 @@ class App(ctk.CTk):
         today = date.today()
 
         ctk.CTkLabel(top, text="Fecha inicial").grid(row=0, column=0, padx=(10, 4), pady=8)
-        self.start_var = tk.StringVar(value=today.replace(day=1).isoformat())
+        self.start_var = tk.StringVar(value=(today - timedelta(days=2)).isoformat())
         ctk.CTkEntry(top, textvariable=self.start_var, width=110).grid(row=0, column=1)
         ctk.CTkLabel(top, text="Fecha final").grid(row=0, column=2, padx=(14, 4))
         self.end_var = tk.StringVar(value=today.isoformat())
