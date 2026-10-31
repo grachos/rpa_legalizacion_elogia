@@ -175,7 +175,7 @@ class App(ctk.CTk):
         today = date.today()
 
         ctk.CTkLabel(top, text="Fecha inicial").grid(row=0, column=0, padx=(10, 4), pady=8)
-        self.start_var = tk.StringVar(value=(today - timedelta(days=2)).isoformat())
+        self.start_var = tk.StringVar(value=(today - timedelta(days=1)).isoformat())
         ctk.CTkEntry(top, textvariable=self.start_var, width=110).grid(row=0, column=1)
         ctk.CTkLabel(top, text="Fecha final").grid(row=0, column=2, padx=(14, 4))
         self.end_var = tk.StringVar(value=today.isoformat())
