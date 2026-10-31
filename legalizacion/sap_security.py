@@ -131,7 +131,9 @@ class SecurityPromptWatcher:
                     self._seen_err.add(hwnd)
                     _log(f"UIA text read failed: {e}")
         joined = " ".join(texts).lower()
-        if joined.strip() and "~sap{" not in joined:
+        # SAP doesn't expose the file path to Win32/UIA (only the buttons), so a prompt is skipped
+        # only when we can actually see a path that is not one of SAP's ~SAP{...} temp files.
+        if ":\\" in joined and "~sap{" not in joined:
             if hwnd not in self._seen_err:
                 self._seen_err.add(hwnd)
                 _log(f"prompt ignored (not a ~SAP temp file): {joined[:120]!r}")
