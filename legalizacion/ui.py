@@ -146,8 +146,12 @@ class App(ctk.CTk):
         super().__init__()
         ctk.set_appearance_mode("light")
         self.title("Auto legalización SAP")
-        self.geometry("1280x760")
-        self.after(50, self._maximize)
+        w, h = 1280, 760  # fallback size, centered, before maximizing
+        x = max((self.winfo_screenwidth() - w) // 2, 0)
+        y = max((self.winfo_screenheight() - h) // 2, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        # CustomTkinter re-applies geometry shortly after start (DPI scaling), so maximize afterwards.
+        self.after(250, self._maximize)
         self.minsize(980, 600)
         self.state_data = _load_state()
         self.result: engine.LegalizationResult | None = None
@@ -212,6 +216,7 @@ class App(ctk.CTk):
             self.sap_info.configure(text="Cambiaste de ambiente: vuelve a traer los saldos de SAP.")
 
     def _maximize(self) -> None:
+        self.update_idletasks()
         try:
             self.state("zoomed")  # Windows
         except tk.TclError:
