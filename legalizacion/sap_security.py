@@ -33,6 +33,8 @@ class SecurityPromptWatcher:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._tries: dict[int, int] = {}
+        self._seen: set[int] = set()
+        self._seen_err: set[int] = set()
 
     def __enter__(self) -> "SecurityPromptWatcher":
         self._thread.start()
@@ -45,17 +47,33 @@ class SecurityPromptWatcher:
 
     # --- Win32 helpers -------------------------------------------------
     @staticmethod
-    def _top_windows() -> list[int]:
+    def _is_title(t: str) -> bool:
+        t = t.strip().lower()
+        return t in TITLES or ("seguridad" in t and "sap" in t) or ("security" in t and "sap" in t)
+
+    def _candidates(self) -> list[int]:
+        """Visible top-level windows that look like the SAP security prompt (+ foreground window)."""
         import win32gui
 
         found: list[int] = []
 
         def cb(h, _):
-            if win32gui.IsWindowVisible(h) and win32gui.GetWindowText(h).strip().lower() in TITLES:
-                found.append(h)
+            if win32gui.IsWindowVisible(h):
+                t = win32gui.GetWindowText(h)
+                if self._is_title(t):
+                    found.append(h)
+                elif "sap" in t.lower() and h not in self._seen:
+                    self._seen.add(h)
+                    _log(f"sap window seen: hwnd={h} class={win32gui.GetClassName(h)!r} title={t!r}")
             return True
 
         win32gui.EnumWindows(cb, None)
+        fg = win32gui.GetForegroundWindow()
+        if fg and fg not in found:
+            # custom-drawn dialogs may have an empty/odd native title: check its text via children/UIA
+            kids = " ".join(t for _, _, t in self._children(fg) if t).lower()
+            if "~sap{" in kids:
+                found.append(fg)
         return found
 
     @staticmethod
@@ -79,6 +97,26 @@ class SecurityPromptWatcher:
         w = UIAWrapper(UIAElementInfo(handle_or_elem=hwnd))
         return [t.window_text() for t in w.descendants() if t.window_text()]
 
+    @staticmethod
+    def _alt_p(hwnd: int) -> None:
+        """Same as pressing Alt+P by hand: focus the dialog and send the keystroke."""
+        import win32api
+        import win32con
+        import win32gui
+
+        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)  # a tap of Alt lets us take the foreground
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception as e:  # noqa: BLE001
+            _log(f"SetForegroundWindow failed: {e}")
+        time.sleep(0.15)
+        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+        win32api.keybd_event(ord("P"), 0, 0, 0)
+        win32api.keybd_event(ord("P"), 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+
     def _handle(self, hwnd: int) -> None:
         import win32con
         import win32gui
@@ -89,42 +127,46 @@ class SecurityPromptWatcher:
             try:
                 texts += self._uia_texts(hwnd)
             except Exception as e:  # noqa: BLE001
-                _log(f"UIA text read failed: {e}")
+                if hwnd not in self._seen_err:
+                    self._seen_err.add(hwnd)
+                    _log(f"UIA text read failed: {e}")
         joined = " ".join(texts).lower()
         if joined.strip() and "~sap{" not in joined:
-            return  # a different prompt: leave it for the user
-        if not joined.strip():
-            _log("dialog text unreadable; accepting (only active during GR55)")
+            if hwnd not in self._seen_err:
+                self._seen_err.add(hwnd)
+                _log(f"prompt ignored (not a ~SAP temp file): {joined[:120]!r}")
+            return
+        if not joined.strip() and hwnd not in self._seen_err:
+            self._seen_err.add(hwnd)
+            _log(f"dialog text unreadable (children={len(kids)}); accepting (only active during GR55)")
 
         n = self._tries.get(hwnd, 0)
         self._tries[hwnd] = n + 1
         btn = next((h for h, cls, t in kids
                     if t.replace("&", "").strip().lower() in ALLOW and "button" in cls.lower()), None)
-        if btn and n < 5:
+        if btn and n < 2:
             win32gui.PostMessage(btn, win32con.BM_CLICK, 0, 0)
             _log(f"clicked Permitir via Win32 (hwnd={hwnd}, try={n + 1})")
-        else:  # Win32 click didn't close it (or no button found): UIA invoke, then Alt+P
+        elif n < 4:
             try:
                 from pywinauto.controls.uiawrapper import UIAWrapper
                 from pywinauto.uia_element_info import UIAElementInfo
 
                 w = UIAWrapper(UIAElementInfo(handle_or_elem=hwnd))
-                for name in ("Permitir", "Allow"):
-                    b = w.descendants(title=name, control_type="Button")
-                    if b:
-                        b[0].invoke()
-                        _log(f"clicked Permitir via UIA (hwnd={hwnd})")
-                        break
+                b = [x for name in ("Permitir", "Allow") for x in w.descendants(title=name, control_type="Button")]
+                if b:
+                    b[0].invoke()
+                    _log(f"clicked Permitir via UIA (hwnd={hwnd}, try={n + 1})")
                 else:
-                    win32gui.SetForegroundWindow(hwnd)
-                    from pywinauto.keyboard import send_keys
-
-                    send_keys("%p")
-                    _log(f"sent Alt+P (hwnd={hwnd})")
+                    raise RuntimeError("button not found by UIA")
             except Exception as e:  # noqa: BLE001
-                _log(f"fallback click failed: {e}")
+                _log(f"UIA click failed ({e}); sending Alt+P")
+                self._alt_p(hwnd)
+        else:
+            self._alt_p(hwnd)
+            _log(f"sent Alt+P (hwnd={hwnd}, try={n + 1})")
         self.accepted += 1
-        time.sleep(0.3)
+        time.sleep(0.4)
 
     def _loop(self) -> None:
         try:
@@ -136,7 +178,7 @@ class SecurityPromptWatcher:
         _log("watcher started")
         while not self._stop.is_set():
             try:
-                for hwnd in self._top_windows():
+                for hwnd in self._candidates():
                     self._handle(hwnd)
             except Exception as e:  # noqa: BLE001 - window may vanish mid-scan; retry next tick
                 _log(f"scan error: {e}")
